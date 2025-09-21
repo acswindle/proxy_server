@@ -38,16 +38,18 @@ func (s ProxyServer) CacheMiddlware(next http.Handler) http.Handler {
 			}
 
 			w.Header().Set("X-Cache", "HIT")
-			cacheResponse, err := s.cache.Get(r.URL.String())
+			url := r.URL.String() + "?" + r.URL.RawQuery
+			cacheResponse, err := s.cache.Get(url)
 			if err != nil {
 				// response := s.ForwardRequest(r.URL.Path, r.Method)
 				tempWriter := CacheResponseWriter{
+					StatusCode:     200,
 					ResponseHeader: http.Header{},
 					Body:           bytes.Buffer{},
 				}
 				next.ServeHTTP(&tempWriter, r)
 				var err error
-				cacheResponse, err = s.cache.Add(r.URL.String(), &tempWriter)
+				cacheResponse, err = s.cache.Add(url, &tempWriter)
 				if err != nil {
 					s.logger.Error("could not add response to cache", "error", err)
 				}

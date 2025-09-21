@@ -35,18 +35,18 @@ type ProxyServer struct {
 	cache  *CacheMap
 }
 
-func (s ProxyServer) ForwardRequest(r *http.Request) *http.Response {
+func (s ProxyServer) ForwardRequest(r *http.Request) (*http.Response, error) {
 	fullPath := fmt.Sprintf("%s%s%s", s.config.url, r.URL.Path, r.URL.RawQuery)
 	request, err := http.NewRequest(r.Method, fullPath, r.Body)
-	request.Header = r.Header
+	copyHeader(request.Header, r.Header)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return response
+	return response, nil
 }
 
 func CopyResponse(ClientResponse *http.Response, w http.ResponseWriter) {
@@ -57,7 +57,10 @@ func CopyResponse(ClientResponse *http.Response, w http.ResponseWriter) {
 }
 
 func (s ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	response := s.ForwardRequest(r)
+	response, err := s.ForwardRequest(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("issue forwarding request to %s: %e", s.config.url, err), http.StatusExpectationFailed)
+	}
 	CopyResponse(response, w)
 }
 
