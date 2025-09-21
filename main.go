@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -9,17 +8,22 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"time"
 )
 
 type ProxyConfig struct {
-	port int
-	url  string
+	port          int
+	url           string
+	clientTimeout int
+	cacheTimeout  int
 }
 
 func ParseFlags() *ProxyConfig {
 	config := ProxyConfig{}
 	flag.IntVar(&config.port, "port", 9999, "port to serve proxy on")
 	flag.StringVar(&config.url, "url", "http://httpbin.org", "url to forward to")
+	flag.IntVar(&config.clientTimeout, "ctime", 10, "client timeout time in seconds")
+	flag.IntVar(&config.cacheTimeout, "cachetime", 5, "time to cache results in minutes")
 	flag.Parse()
 	return &config
 }
@@ -28,12 +32,13 @@ type ProxyServer struct {
 	config *ProxyConfig
 	client http.Client
 	logger *slog.Logger
+	cache  *CacheMap
 }
 
-func (s ProxyServer) ForwardRequest(subpath string, method string) *http.Response {
-	buffer := bytes.NewBuffer([]byte{})
-	fullPath := fmt.Sprintf("%s%s", s.config.url, subpath)
-	request, err := http.NewRequest(method, fullPath, buffer)
+func (s ProxyServer) ForwardRequest(r *http.Request) *http.Response {
+	fullPath := fmt.Sprintf("%s%s%s", s.config.url, r.URL.Path, r.URL.RawQuery)
+	request, err := http.NewRequest(r.Method, fullPath, r.Body)
+	request.Header = r.Header
 	if err != nil {
 		panic(err)
 	}
@@ -45,19 +50,14 @@ func (s ProxyServer) ForwardRequest(subpath string, method string) *http.Respons
 }
 
 func CopyResponse(ClientResponse *http.Response, w http.ResponseWriter) {
-	for key, vals := range ClientResponse.Header {
-		for _, val := range vals {
-			w.Header().Add(key, val)
-		}
-	}
-	w.Header().Add("X-Cache", "MISS")
+	copyHeader(w.Header(), ClientResponse.Header)
 	w.WriteHeader(ClientResponse.StatusCode)
+	defer ClientResponse.Body.Close()
 	io.Copy(w, ClientResponse.Body)
 }
 
 func (s ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.logger.Info("Forwarding request", "subpath", r.URL.Path, "method", r.Method)
-	response := s.ForwardRequest(r.URL.Path, r.Method)
+	response := s.ForwardRequest(r)
 	CopyResponse(response, w)
 }
 
@@ -65,17 +65,20 @@ func main() {
 	config := ParseFlags()
 	server := ProxyServer{
 		config,
-		http.Client{},
+		http.Client{
+			Timeout: time.Duration(config.clientTimeout) * time.Second,
+		},
 		slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			AddSource: true,
 			Level:     slog.LevelInfo,
 		})),
+		NewCacheMap(config.cacheTimeout),
 	}
 	server.logger.Info("Starting Proxy Server", "port", config.port,
 		"forward-url", config.url)
 	if err := http.ListenAndServe(
 		fmt.Sprintf(":%d", config.port),
-		server,
+		server.CacheMiddlware(server),
 	); err != nil {
 		server.logger.Error("could not start http listener", "error", err,
 			"stack", debug.Stack())
