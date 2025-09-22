@@ -33,15 +33,8 @@ func NewCacheMap(timeout int) *CacheMap {
 
 func (c *CacheMap) delete(url string) {
 	c.Lock()
+	defer c.Unlock()
 	delete(c.cache, url)
-	c.Unlock()
-}
-
-func (c *CacheMap) get(url string) (*CacheResult, bool) {
-	c.RLock()
-	result, present := c.cache[url]
-	c.RUnlock()
-	return result, present
 }
 
 func (c *CacheMap) cleanCache() {
@@ -76,12 +69,14 @@ func (c *CacheMap) Add(url string, r *CacheResponseWriter) (*CacheResult, error)
 }
 
 func (c *CacheMap) Get(url string) (*CacheResult, error) {
-	response, present := c.get(url)
+	c.RLock()
+	defer c.RUnlock()
+	response, present := c.cache[url]
 	if !present {
 		return nil, errors.New("response not in cache")
 	}
 	if time.Now().After(response.Expires) {
-		c.delete(url)
+		go c.delete(url)
 		return nil, errors.New("cache result expired")
 	}
 	return response, nil

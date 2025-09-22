@@ -60,6 +60,7 @@ func (s ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	response, err := s.ForwardRequest(r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("issue forwarding request to %s: %e", s.config.url, err), http.StatusExpectationFailed)
+		return
 	}
 	CopyResponse(response, w)
 }
